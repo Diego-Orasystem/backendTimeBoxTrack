@@ -1,0 +1,30 @@
+# Usar imagen oficial de Node.js para desarrollo
+FROM node:18-alpine
+
+# Instalar curl para healthcheck
+RUN apk add --no-cache curl
+
+# Establecer directorio de trabajo
+WORKDIR /app
+
+# Copiar archivos de dependencias
+COPY package*.json ./
+
+# Instalar todas las dependencias (incluyendo devDependencies)
+RUN npm ci
+
+# Copiar código fuente
+COPY . .
+
+# Crear carpeta de uploads
+RUN mkdir -p uploads
+
+# Exponer puertos
+EXPOSE 3000 9229
+
+# Variables de entorno por defecto
+ENV NODE_ENV=development
+ENV PORT=3000
+
+# Comando para ejecutar la aplicación en modo desarrollo
+CMD ["npm", "run", "dev"]

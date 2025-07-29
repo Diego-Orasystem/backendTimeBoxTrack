@@ -33,4 +33,30 @@ build
 .idea
 *.swp
 *.swo
-*~ 
+*~
+
+# Docker files
+Dockerfile.dev
+docker-compose.dev.yml
+docker-compose.yml
+
+# Documentation
+*.md
+docs/
+
+# Test files
+test/
+tests/
+__tests__/
+*.test.js
+*.spec.js
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini 
