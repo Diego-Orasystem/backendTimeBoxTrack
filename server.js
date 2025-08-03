@@ -35,10 +35,16 @@ app.use(morgan('combined'));
 
 // Middleware de CORS
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
+  origin: [
+    'http://localhost:4200',
+    'http://10.90.0.190:4200',
+    'http://10.90.0.190',
+    'http://localhost:3000',
+    'http://10.90.0.190:3000'
+  ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY', 'Origin', 'Accept']
 }));
 
 // Middleware para parsear JSON
