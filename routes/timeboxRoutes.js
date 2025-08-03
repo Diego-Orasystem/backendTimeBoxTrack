@@ -79,6 +79,9 @@ router.get('/stats', TimeboxController.getTimeboxStats);
 // GET /api/timeboxes/with-postulations - Obtener timeboxes con postulaciones
 router.get('/with-postulations', TimeboxController.getTimeboxesWithPostulations);
 
+// GET /api/timeboxes/published - Obtener timeboxes publicados
+router.get('/published', TimeboxController.getPublishedTimeboxes);
+
 // Rutas para tipos de timebox (DEBEN IR ANTES DE LAS RUTAS CON PARÁMETROS)
 // GET /api/timeboxes/types - Obtener todos los tipos de timebox
 router.get('/types', TimeboxController.getAllTimeboxTypes);

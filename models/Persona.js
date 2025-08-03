@@ -101,6 +101,23 @@ class Persona {
   static async getTesters() {
     return await this.findByRol('Tester');
   }
+
+  // Método alias para compatibilidad con el controlador
+  static async findByRole(rol) {
+    return await this.findByRol(rol);
+  }
+
+  // Obtener todos los roles únicos
+  static async getAllRoles() {
+    const sql = `
+      SELECT DISTINCT rol 
+      FROM personas 
+      WHERE rol IS NOT NULL 
+      ORDER BY rol ASC
+    `;
+    const result = await executeQuery(sql);
+    return result.map(row => row.rol);
+  }
 }
 
 module.exports = Persona; 

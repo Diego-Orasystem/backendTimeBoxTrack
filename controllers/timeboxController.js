@@ -159,7 +159,7 @@ class TimeboxController {
         });
       }
 
-      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado } = req.body;
+      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta } = req.body;
       const id = uuidv4();
       
       const sql = `
@@ -168,8 +168,13 @@ class TimeboxController {
       `;
       
       await executeQuery(sql, [id, tipoTimeboxId, businessAnalystId || null, projectId, monto || null, estado || 'En Definicion']);
+
+      // Guardar las fases si existen
+      if (fases) {
+        await TimeboxController.savePhasesToDatabase(id, fases);
+      }
       
-      // Obtener el timebox creado
+      // Obtener el timebox creado con sus fases
       const [newTimebox] = await executeQuery(`
         SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
                per.nombre as business_analyst_nombre
@@ -179,6 +184,10 @@ class TimeboxController {
         LEFT JOIN personas per ON t.business_analyst_id = per.id
         WHERE t.id = ?
       `, [id]);
+
+      // Cargar las fases del timebox
+      const loadedFases = await TimeboxController.loadPhasesFromDatabase(id);
+      newTimebox.fases = loadedFases;
       
       res.status(201).json({
         status: true,
@@ -198,7 +207,8 @@ class TimeboxController {
   // Actualizar timebox
   static async updateTimebox(req, res) {
     try {
-      const { id } = req.params;
+      const { id, timeboxId } = req.params;
+      const timeboxIdToUse = timeboxId || id; // Usar timeboxId si existe, sino usar id
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({
@@ -208,10 +218,10 @@ class TimeboxController {
         });
       }
 
-      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado } = req.body;
+      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta } = req.body;
       
       // Verificar que el timebox existe
-      const [existingTimebox] = await executeQuery('SELECT * FROM timeboxes WHERE id = ?', [id]);
+      const [existingTimebox] = await executeQuery('SELECT * FROM timeboxes WHERE id = ?', [timeboxIdToUse]);
       if (!existingTimebox) {
         return res.status(404).json({
           status: false,
@@ -245,12 +255,22 @@ class TimeboxController {
       }
       
       updates.push('updated_at = CURRENT_TIMESTAMP');
-      values.push(id);
+      values.push(timeboxIdToUse);
       
       const sql = `UPDATE timeboxes SET ${updates.join(', ')} WHERE id = ?`;
       await executeQuery(sql, values);
+
+      // Actualizar las fases si existen
+      if (fases) {
+        await TimeboxController.savePhasesToDatabase(timeboxIdToUse, fases);
+      }
+
+      // Actualizar publicación de oferta y postulaciones si existen
+      if (publicacionOferta) {
+        await TimeboxController.savePublicacionOfertaToDatabase(timeboxIdToUse, publicacionOferta);
+      }
       
-      // Obtener el timebox actualizado
+      // Obtener el timebox actualizado con sus fases
       const [updatedTimebox] = await executeQuery(`
         SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
                per.nombre as business_analyst_nombre
@@ -259,7 +279,15 @@ class TimeboxController {
         LEFT JOIN projects p ON t.project_id = p.id
         LEFT JOIN personas per ON t.business_analyst_id = per.id
         WHERE t.id = ?
-      `, [id]);
+      `, [timeboxIdToUse]);
+
+      // Cargar las fases del timebox
+      const loadedFases = await TimeboxController.loadPhasesFromDatabase(timeboxIdToUse);
+      updatedTimebox.fases = loadedFases;
+
+      // Cargar publicación de oferta y postulaciones
+      const loadedPublicacionOferta = await TimeboxController.loadPublicacionOfertaFromDatabase(timeboxIdToUse);
+      updatedTimebox.publicacionOferta = loadedPublicacionOferta;
 
       res.json({
         status: true,
@@ -268,6 +296,46 @@ class TimeboxController {
       });
     } catch (error) {
       console.error('Error al actualizar timebox:', error);
+      res.status(500).json({
+        status: false,
+        message: 'Error interno del servidor',
+        error: error.message
+      });
+    }
+  }
+
+  // Obtener timeboxes publicados (estado "Disponible")
+  static async getPublishedTimeboxes(req, res) {
+    try {
+      const sql = `
+        SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
+               per.nombre as business_analyst_nombre
+        FROM timeboxes t
+        LEFT JOIN timebox_types tt ON t.tipo_timebox_id = tt.id
+        LEFT JOIN projects p ON t.project_id = p.id
+        LEFT JOIN personas per ON t.business_analyst_id = per.id
+        WHERE t.estado = 'Disponible'
+        ORDER BY t.created_at DESC
+      `;
+      
+      const timeboxes = await executeQuery(sql);
+      
+      // Cargar las fases y publicación de oferta para cada timebox
+      for (let timebox of timeboxes) {
+        const fases = await TimeboxController.loadPhasesFromDatabase(timebox.id);
+        timebox.fases = fases;
+        
+        const publicacionOferta = await TimeboxController.loadPublicacionOfertaFromDatabase(timebox.id);
+        timebox.publicacionOferta = publicacionOferta;
+      }
+      
+      res.json({
+        status: true,
+        message: 'Timeboxes publicados obtenidos exitosamente',
+        data: timeboxes
+      });
+    } catch (error) {
+      console.error('Error al obtener timeboxes publicados:', error);
       res.status(500).json({
         status: false,
         message: 'Error interno del servidor',
@@ -378,6 +446,11 @@ class TimeboxController {
       
       const timeboxes = await executeQuery(sql, [projectId]);
       
+      // Cargar las fases para cada timebox
+      for (let timebox of timeboxes) {
+        timebox.fases = await TimeboxController.loadPhasesFromDatabase(timebox.id);
+      }
+      
       res.json({
         status: true,
         message: 'Timeboxes del proyecto obtenidos exitosamente',
@@ -408,10 +481,19 @@ class TimeboxController {
       
       const [stats] = await executeQuery(statsSql);
       
+      // Convertir BigInt a Number para evitar errores de serialización
+      const processedStats = {
+        total: Number(stats.total),
+        en_definicion: Number(stats.en_definicion),
+        disponible: Number(stats.disponible),
+        en_ejecucion: Number(stats.en_ejecucion),
+        finalizado: Number(stats.finalizado)
+      };
+      
       res.json({
         status: true,
         message: 'Estadísticas obtenidas exitosamente',
-        data: stats
+        data: processedStats
       });
     } catch (error) {
       console.error('Error al obtener estadísticas:', error);
@@ -441,10 +523,27 @@ class TimeboxController {
       
       const timeboxes = await executeQuery(sql);
       
+      // Cargar fases y publicación de oferta para cada timebox
+      const processedTimeboxes = [];
+      for (let timebox of timeboxes) {
+        // Cargar las fases del timebox
+        const fases = await TimeboxController.loadPhasesFromDatabase(timebox.id);
+        
+        // Cargar publicación de oferta y postulaciones
+        const publicacionOferta = await TimeboxController.loadPublicacionOfertaFromDatabase(timebox.id);
+        
+        processedTimeboxes.push({
+          ...timebox,
+          num_postulaciones: Number(timebox.num_postulaciones),
+          fases: fases,
+          publicacionOferta: publicacionOferta
+        });
+      }
+      
       res.json({
         status: true,
         message: 'Timeboxes con postulaciones obtenidos exitosamente',
-        data: timeboxes
+        data: processedTimeboxes
       });
     } catch (error) {
       console.error('Error al obtener timeboxes con postulaciones:', error);
@@ -652,7 +751,7 @@ class TimeboxController {
 
       // Verificar que no hay timeboxes usando este tipo
       const [timeboxesUsingType] = await executeQuery('SELECT COUNT(*) as count FROM timeboxes WHERE tipo_timebox_id = ?', [id]);
-      if (timeboxesUsingType.count > 0) {
+      if (Number(timeboxesUsingType.count) > 0) {
         return res.status(400).json({
           status: false,
           message: 'No se puede eliminar el tipo de timebox porque está siendo usado por timeboxes existentes'
@@ -796,7 +895,7 @@ class TimeboxController {
 
       // Verificar que no hay tipos de timebox usando esta categoría
       const [typesUsingCategory] = await executeQuery('SELECT COUNT(*) as count FROM timebox_types WHERE categoria_id = ?', [id]);
-      if (typesUsingCategory.count > 0) {
+      if (Number(typesUsingCategory.count) > 0) {
         return res.status(400).json({
           status: false,
           message: 'No se puede eliminar la categoría porque está siendo usada por tipos de timebox existentes'
@@ -817,6 +916,494 @@ class TimeboxController {
         message: 'Error interno del servidor',
         error: error.message
       });
+    }
+  }
+
+  // Método auxiliar para convertir fecha ISO a formato DATE de MySQL
+  static formatDateForMySQL(dateValue) {
+    if (!dateValue) return null;
+    try {
+      const date = new Date(dateValue);
+      if (isNaN(date.getTime())) return null;
+      return date.toISOString().split('T')[0]; // Obtiene solo YYYY-MM-DD
+    } catch (error) {
+      console.error('Error convirtiendo fecha:', error);
+      return null;
+    }
+  }
+
+  // Método auxiliar para guardar las fases en la base de datos
+  static async savePhasesToDatabase(timeboxId, fases) {
+    try {
+      // Guardar fase de planning
+      if (fases.planning) {
+        const planning = fases.planning;
+        const planningId = planning.id || uuidv4();
+        
+        await executeQuery(`
+          INSERT INTO planning_phases (id, timebox_id, nombre, codigo, descripcion, fecha_fase, eje, aplicativo, alcance, esfuerzo, fecha_inicio, team_leader_id, completada)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          nombre = VALUES(nombre), codigo = VALUES(codigo), descripcion = VALUES(descripcion),
+          fecha_fase = VALUES(fecha_fase), eje = VALUES(eje), aplicativo = VALUES(aplicativo),
+          alcance = VALUES(alcance), esfuerzo = VALUES(esfuerzo), fecha_inicio = VALUES(fecha_inicio),
+          team_leader_id = VALUES(team_leader_id), completada = VALUES(completada), updated_at = CURRENT_TIMESTAMP
+        `, [
+          planningId,
+          timeboxId,
+          planning.nombre || '',
+          planning.codigo || '',
+          planning.descripcion || null,
+          TimeboxController.formatDateForMySQL(planning.fechaFase || planning.fecha_fase),
+          planning.eje || null,
+          planning.aplicativo || null,
+          planning.alcance || null,
+          planning.esfuerzo || null,
+          TimeboxController.formatDateForMySQL(planning.fechaInicio || planning.fecha_inicio),
+          planning.teamLeader?.id || planning.team_leader_id || null,
+          planning.completada || false
+        ]);
+
+        // Guardar adjuntos de planning si existen
+        if (planning.adjuntos && Array.isArray(planning.adjuntos)) {
+          await TimeboxController.saveAdjuntosForPhase(planningId, planning.adjuntos, 'planning');
+        }
+      }
+
+      // Guardar fase de kickoff
+      if (fases.kickOff) {
+        const kickoff = fases.kickOff;
+        const kickoffId = kickoff.id || uuidv4();
+        
+        await executeQuery(`
+          INSERT INTO kickoff_phases (id, timebox_id, fecha_fase, completada, team_movilization, participantes, lista_acuerdos)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          fecha_fase = VALUES(fecha_fase),
+          completada = VALUES(completada),
+          team_movilization = VALUES(team_movilization),
+          participantes = VALUES(participantes),
+          lista_acuerdos = VALUES(lista_acuerdos),
+          updated_at = CURRENT_TIMESTAMP
+        `, [
+          kickoffId,
+          timeboxId,
+          TimeboxController.formatDateForMySQL(kickoff.fechaFase || kickoff.fecha_fase),
+          kickoff.completada || false,
+          kickoff.teamMovilization ? JSON.stringify(kickoff.teamMovilization) : null,
+          kickoff.participantes ? JSON.stringify(kickoff.participantes) : null,
+          kickoff.listaAcuerdos ? JSON.stringify(kickoff.listaAcuerdos) : null
+        ]);
+      }
+
+      // Guardar fase de refinement
+      if (fases.refinement) {
+        const refinement = fases.refinement;
+        const refinementId = refinement.id || uuidv4();
+        
+        await executeQuery(`
+          INSERT INTO refinement_phases (id, timebox_id, fecha_fase, completada, revisiones)
+          VALUES (?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          fecha_fase = VALUES(fecha_fase),
+          completada = VALUES(completada),
+          revisiones = VALUES(revisiones),
+          updated_at = CURRENT_TIMESTAMP
+        `, [
+          refinementId,
+          timeboxId,
+          TimeboxController.formatDateForMySQL(refinement.fechaFase || refinement.fecha_fase),
+          refinement.completada || false,
+          refinement.revisiones ? JSON.stringify(refinement.revisiones) : null
+        ]);
+      }
+
+      // Guardar fase de qa
+      if (fases.qa) {
+        const qa = fases.qa;
+        const qaId = qa.id || uuidv4();
+        
+        await executeQuery(`
+          INSERT INTO qa_phases (
+            id, timebox_id, fecha_fase, completada, estado_consolidacion, progreso_consolidacion,
+            fecha_preparacion_entorno, entorno_pruebas, version_despliegue, responsable_despliegue,
+            observaciones_despliegue, plan_pruebas_url, resultados_pruebas, bugs_identificados,
+            url_bugs, responsable_qa, fecha_inicio_uat, fecha_fin_uat, estado_uat,
+            responsable_uat, feedback_uat
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          fecha_fase = VALUES(fecha_fase),
+          completada = VALUES(completada),
+          estado_consolidacion = VALUES(estado_consolidacion),
+          progreso_consolidacion = VALUES(progreso_consolidacion),
+          fecha_preparacion_entorno = VALUES(fecha_preparacion_entorno),
+          entorno_pruebas = VALUES(entorno_pruebas),
+          version_despliegue = VALUES(version_despliegue),
+          responsable_despliegue = VALUES(responsable_despliegue),
+          observaciones_despliegue = VALUES(observaciones_despliegue),
+          plan_pruebas_url = VALUES(plan_pruebas_url),
+          resultados_pruebas = VALUES(resultados_pruebas),
+          bugs_identificados = VALUES(bugs_identificados),
+          url_bugs = VALUES(url_bugs),
+          responsable_qa = VALUES(responsable_qa),
+          fecha_inicio_uat = VALUES(fecha_inicio_uat),
+          fecha_fin_uat = VALUES(fecha_fin_uat),
+          estado_uat = VALUES(estado_uat),
+          responsable_uat = VALUES(responsable_uat),
+          feedback_uat = VALUES(feedback_uat),
+          updated_at = CURRENT_TIMESTAMP
+        `, [
+          qaId,
+          timeboxId,
+          TimeboxController.formatDateForMySQL(qa.fechaFase || qa.fecha_fase),
+          qa.completada || false,
+          qa.estadoConsolidacion || 'Pendiente',
+          qa.progresoConsolidacion || 0,
+          TimeboxController.formatDateForMySQL(qa.fechaPreparacionEntorno),
+          qa.entornoPruebas || null,
+          qa.versionDespliegue || null,
+          qa.responsableDespliegue || null,
+          qa.observacionesDespliegue || null,
+          qa.planPruebasUrl || null,
+          qa.resultadosPruebas || null,
+          qa.bugsIdentificados || null,
+          qa.urlBugs || null,
+          qa.responsableQa || null,
+          TimeboxController.formatDateForMySQL(qa.fechaInicioUat),
+          TimeboxController.formatDateForMySQL(qa.fechaFinUat),
+          qa.estadoUat || 'Pendiente',
+          qa.responsableUat || null,
+          qa.feedbackUat || null
+        ]);
+      }
+
+      // Guardar fase de close
+      if (fases.close) {
+        const close = fases.close;
+        const closeId = close.id || uuidv4();
+        
+        await executeQuery(`
+          INSERT INTO close_phases (
+            id, timebox_id, fecha_fase, completada, checklist, adjuntos, cumplimiento,
+            observaciones, aprobador, ev_madurez_aplicativo, mejoras
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          fecha_fase = VALUES(fecha_fase),
+          completada = VALUES(completada),
+          checklist = VALUES(checklist),
+          adjuntos = VALUES(adjuntos),
+          cumplimiento = VALUES(cumplimiento),
+          observaciones = VALUES(observaciones),
+          aprobador = VALUES(aprobador),
+          ev_madurez_aplicativo = VALUES(ev_madurez_aplicativo),
+          mejoras = VALUES(mejoras),
+          updated_at = CURRENT_TIMESTAMP
+        `, [
+          closeId,
+          timeboxId,
+          TimeboxController.formatDateForMySQL(close.fechaFase || close.fecha_fase),
+          close.completada || false,
+          close.checklist ? JSON.stringify(close.checklist) : null,
+          close.adjuntos ? JSON.stringify(close.adjuntos) : null,
+          close.cumplimiento || 'Total',
+          close.observaciones || null,
+          close.aprobador || null,
+          close.evMadurezAplicativo || null,
+          close.mejoras ? JSON.stringify(close.mejoras) : null
+        ]);
+      }
+      
+    } catch (error) {
+      console.error('Error guardando fases:', error);
+      throw error;
+    }
+  }
+
+  // Método auxiliar para cargar las fases desde la base de datos
+  static async loadPhasesFromDatabase(timeboxId) {
+    try {
+      const fases = {};
+
+      // Cargar planning
+      const planning = await executeQuery(`
+        SELECT pp.*, p.nombre as team_leader_nombre
+        FROM planning_phases pp
+        LEFT JOIN personas p ON pp.team_leader_id = p.id
+        WHERE pp.timebox_id = ?
+      `, [timeboxId]);
+
+      if (planning.length > 0) {
+        const p = planning[0];
+        
+        // Cargar adjuntos de planning
+        const adjuntos = await TimeboxController.loadAdjuntosForPhase(p.id, 'planning');
+        
+        fases.planning = {
+          id: p.id,
+          nombre: p.nombre,
+          codigo: p.codigo,
+          descripcion: p.descripcion,
+          fechaFase: p.fecha_fase,
+          eje: p.eje,
+          aplicativo: p.aplicativo,
+          alcance: p.alcance,
+          esfuerzo: p.esfuerzo,
+          fechaInicio: p.fecha_inicio,
+          teamLeader: p.team_leader_id ? {
+            id: p.team_leader_id,
+            nombre: p.team_leader_nombre
+          } : null,
+          completada: p.completada,
+          adjuntos: adjuntos
+        };
+      }
+
+      // Cargar kickoff
+      const kickoff = await executeQuery(`
+        SELECT * FROM kickoff_phases WHERE timebox_id = ?
+      `, [timeboxId]);
+
+      if (kickoff.length > 0) {
+        const k = kickoff[0];
+        fases.kickOff = {
+          id: k.id,
+          fechaFase: k.fecha_fase,
+          completada: k.completada,
+          teamMovilization: k.team_movilization || undefined,
+          participantes: k.participantes || undefined,
+          listaAcuerdos: k.lista_acuerdos || undefined
+        };
+      }
+
+      // Cargar refinement
+      const refinement = await executeQuery(`
+        SELECT * FROM refinement_phases WHERE timebox_id = ?
+      `, [timeboxId]);
+
+      if (refinement.length > 0) {
+        const r = refinement[0];
+        fases.refinement = {
+          id: r.id,
+          fechaFase: r.fecha_fase,
+          completada: r.completada,
+          revisiones: r.revisiones || undefined
+        };
+      }
+
+      // Cargar qa
+      const qa = await executeQuery(`
+        SELECT * FROM qa_phases WHERE timebox_id = ?
+      `, [timeboxId]);
+
+      if (qa.length > 0) {
+        const q = qa[0];
+        fases.qa = {
+          id: q.id,
+          fechaFase: q.fecha_fase,
+          completada: q.completada,
+          estadoConsolidacion: q.estado_consolidacion,
+          progresoConsolidacion: q.progreso_consolidacion,
+          fechaPreparacionEntorno: q.fecha_preparacion_entorno,
+          entornoPruebas: q.entorno_pruebas,
+          versionDespliegue: q.version_despliegue,
+          responsableDespliegue: q.responsable_despliegue,
+          observacionesDespliegue: q.observaciones_despliegue,
+          planPruebasUrl: q.plan_pruebas_url,
+          resultadosPruebas: q.resultados_pruebas,
+          bugsIdentificados: q.bugs_identificados,
+          urlBugs: q.url_bugs,
+          responsableQa: q.responsable_qa,
+          fechaInicioUat: q.fecha_inicio_uat,
+          fechaFinUat: q.fecha_fin_uat,
+          estadoUat: q.estado_uat,
+          responsableUat: q.responsable_uat,
+          feedbackUat: q.feedback_uat
+        };
+      }
+
+      // Cargar close
+      const close = await executeQuery(`
+        SELECT * FROM close_phases WHERE timebox_id = ?
+      `, [timeboxId]);
+
+      if (close.length > 0) {
+        const c = close[0];
+        fases.close = {
+          id: c.id,
+          fechaFase: c.fecha_fase,
+          completada: c.completada,
+          checklist: c.checklist || undefined,
+          adjuntos: c.adjuntos || undefined,
+          cumplimiento: c.cumplimiento,
+          observaciones: c.observaciones,
+          aprobador: c.aprobador,
+          evMadurezAplicativo: c.ev_madurez_aplicativo,
+          mejoras: c.mejoras || undefined
+        };
+      }
+      
+      return fases;
+    } catch (error) {
+      console.error('Error cargando fases:', error);
+      return {};
+    }
+  }
+
+  // Método auxiliar para guardar adjuntos de una fase
+  static async saveAdjuntosForPhase(phaseId, adjuntos, phaseType) {
+    try {
+      for (const adjunto of adjuntos) {
+        if (adjunto.adjuntoId) {
+          // Crear la relación en la tabla correspondiente
+          const relationTable = `${phaseType}_adjuntos`;
+          const phaseColumn = `${phaseType}_id`;
+          
+          await executeQuery(`
+            INSERT INTO ${relationTable} (${phaseColumn}, adjunto_id)
+            VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE ${phaseColumn} = VALUES(${phaseColumn})
+          `, [phaseId, adjunto.adjuntoId]);
+        }
+      }
+    } catch (error) {
+      console.error(`Error guardando adjuntos para fase ${phaseType}:`, error);
+      throw error;
+    }
+  }
+
+  // Método auxiliar para cargar adjuntos de una fase
+  static async loadAdjuntosForPhase(phaseId, phaseType) {
+    try {
+      const relationTable = `${phaseType}_adjuntos`;
+      const phaseColumn = `${phaseType}_id`;
+      
+      const adjuntos = await executeQuery(`
+        SELECT a.* FROM adjuntos a
+        JOIN ${relationTable} pa ON a.id = pa.adjunto_id
+        WHERE pa.${phaseColumn} = ?
+        ORDER BY a.created_at
+      `, [phaseId]);
+      
+      return adjuntos.map(adj => ({
+        id: adj.id,
+        nombre: adj.nombre,
+        url: adj.url,
+        tipo: adj.tipo,
+        adjuntoId: adj.id
+      }));
+    } catch (error) {
+      console.error(`Error cargando adjuntos para fase ${phaseType}:`, error);
+      return [];
+    }
+  }
+
+  // Guardar publicación de oferta y postulaciones en la base de datos
+  static async savePublicacionOfertaToDatabase(timeboxId, publicacionOferta) {
+    try {
+      const publicacionId = publicacionOferta.id || uuidv4();
+      
+      // Guardar o actualizar publicación de oferta
+      await executeQuery(`
+        INSERT INTO publicacion_ofertas (
+          id, timebox_id, solicitado, publicado, fecha_publicacion
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+        solicitado = VALUES(solicitado),
+        publicado = VALUES(publicado),
+        fecha_publicacion = VALUES(fecha_publicacion),
+        updated_at = CURRENT_TIMESTAMP
+      `, [
+        publicacionId,
+        timeboxId,
+        publicacionOferta.solicitado || false,
+        publicacionOferta.publicado || false,
+        TimeboxController.formatDateForMySQL(publicacionOferta.fechaPublicacion)
+      ]);
+
+      // Guardar postulaciones si existen
+      if (publicacionOferta.postulaciones && publicacionOferta.postulaciones.length > 0) {
+        for (const postulacion of publicacionOferta.postulaciones) {
+          const postulacionId = postulacion.id || uuidv4();
+          
+          await executeQuery(`
+            INSERT INTO postulaciones (
+              id, publicacion_id, rol, desarrollador, fecha_postulacion, 
+              estado_solicitud, asignado, fecha_asignacion
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+            rol = VALUES(rol),
+            desarrollador = VALUES(desarrollador),
+            fecha_postulacion = VALUES(fecha_postulacion),
+            estado_solicitud = VALUES(estado_solicitud),
+            asignado = VALUES(asignado),
+            fecha_asignacion = VALUES(fecha_asignacion),
+            updated_at = CURRENT_TIMESTAMP
+          `, [
+            postulacionId,
+            publicacionId,
+            postulacion.rol,
+            postulacion.desarrollador,
+            TimeboxController.formatDateForMySQL(postulacion.fechaPostulacion),
+            postulacion.estadoSolicitud || 'Pendiente',
+            postulacion.asignacion?.asignado || false,
+            TimeboxController.formatDateForMySQL(postulacion.asignacion?.fechaAsignacion)
+          ]);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error guardando publicación de oferta:', error);
+      throw error;
+    }
+  }
+
+  // Cargar publicación de oferta y postulaciones desde la base de datos
+  static async loadPublicacionOfertaFromDatabase(timeboxId) {
+    try {
+      // Cargar publicación de oferta
+      const publicacionOferta = await executeQuery(`
+        SELECT * FROM publicacion_ofertas WHERE timebox_id = ?
+      `, [timeboxId]);
+
+      if (publicacionOferta.length === 0) {
+        return undefined;
+      }
+
+      const po = publicacionOferta[0];
+      const publicacionData = {
+        id: po.id,
+        solicitado: po.solicitado,
+        publicado: po.publicado,
+        fechaPublicacion: po.fecha_publicacion,
+        postulaciones: []
+      };
+
+      // Cargar postulaciones relacionadas
+      const postulaciones = await executeQuery(`
+        SELECT * FROM postulaciones WHERE publicacion_id = ?
+      `, [po.id]);
+
+      publicacionData.postulaciones = postulaciones.map(p => ({
+        id: p.id,
+        rol: p.rol,
+        desarrollador: p.desarrollador,
+        fechaPostulacion: p.fecha_postulacion,
+        estadoSolicitud: p.estado_solicitud,
+        asignacion: {
+          asignado: p.asignado,
+          fechaAsignacion: p.fecha_asignacion
+        }
+      }));
+
+      return publicacionData;
+      
+    } catch (error) {
+      console.error('Error cargando publicación de oferta:', error);
+      return undefined;
     }
   }
 }
