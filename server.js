@@ -14,6 +14,7 @@ const projectRoutes = require('./routes/projectRoutes');
 const timeboxMaintainerRoutes = require('./routes/timeboxMaintainerRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const personaRoutes = require('./routes/personaRoutes');
+const financeRoutes = require('./routes/financeRoutes');
 
 // Importar middleware de manejo de errores
 const errorHandler = require('./middleware/errorHandler');
@@ -86,6 +87,7 @@ app.use('/api/project', projectRoutes);
 app.use('/api/timebox/maintainer', timeboxMaintainerRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/personas', personaRoutes);
+app.use('/api/finanzas', financeRoutes);
 
 // Middleware para rutas no encontradas
 app.use('*', (req, res) => {

@@ -71,56 +71,56 @@ const projectIdValidation = [
 
 // Rutas
 // GET /api/timeboxes - Obtener todos los timeboxes
-router.get('/', TimeboxController.getAllTimeboxes);
+router.get('/', (req, res) => TimeboxController.getAllTimeboxes(req, res));
 
 // GET /api/timeboxes/stats - Obtener estadísticas
-router.get('/stats', TimeboxController.getTimeboxStats);
+router.get('/stats', (req, res) => TimeboxController.getTimeboxStats(req, res));
 
 // GET /api/timeboxes/with-postulations - Obtener timeboxes con postulaciones
-router.get('/with-postulations', TimeboxController.getTimeboxesWithPostulations);
+router.get('/with-postulations', (req, res) => TimeboxController.getTimeboxesWithPostulations(req, res));
 
 // GET /api/timeboxes/published - Obtener timeboxes publicados
-router.get('/published', TimeboxController.getPublishedTimeboxes);
+router.get('/published', (req, res) => TimeboxController.getPublishedTimeboxes(req, res));
 
 // Rutas para tipos de timebox (DEBEN IR ANTES DE LAS RUTAS CON PARÁMETROS)
 // GET /api/timeboxes/types - Obtener todos los tipos de timebox
-router.get('/types', TimeboxController.getAllTimeboxTypes);
+router.get('/types', (req, res) => TimeboxController.getAllTimeboxTypes(req, res));
 
 // GET /api/timeboxes/types/:id - Obtener tipo de timebox por ID
-router.get('/types/:id', idValidation, TimeboxController.getTimeboxTypeById);
+router.get('/types/:id', idValidation, (req, res) => TimeboxController.getTimeboxTypeById(req, res));
 
 // Rutas para categorías de timebox (DEBEN IR ANTES DE LAS RUTAS CON PARÁMETROS)
 // GET /api/timeboxes/categories - Obtener todas las categorías de timebox
-router.get('/categories', TimeboxController.getAllTimeboxCategories);
+router.get('/categories', (req, res) => TimeboxController.getAllTimeboxCategories(req, res));
 
 // ===== CRUD PARA TIMEBOX TYPES =====
 // POST /api/timeboxes/types - Crear nuevo tipo de timebox
-router.post('/types', timeboxTypeValidation, TimeboxController.createTimeboxType);
+router.post('/types', timeboxTypeValidation, (req, res) => TimeboxController.createTimeboxType(req, res));
 
 // PUT /api/timeboxes/types/:id - Actualizar tipo de timebox
-router.put('/types/:id', [...idValidation, ...timeboxTypeValidation], TimeboxController.updateTimeboxType);
+router.put('/types/:id', [...idValidation, ...timeboxTypeValidation], (req, res) => TimeboxController.updateTimeboxType(req, res));
 
 // DELETE /api/timeboxes/types/:id - Eliminar tipo de timebox
-router.delete('/types/:id', idValidation, TimeboxController.deleteTimeboxType);
+router.delete('/types/:id', idValidation, (req, res) => TimeboxController.deleteTimeboxType(req, res));
 
 // ===== CRUD PARA CATEGORÍAS =====
 // POST /api/timeboxes/categories - Crear nueva categoría
-router.post('/categories', categoryValidation, TimeboxController.createTimeboxCategory);
+router.post('/categories', categoryValidation, (req, res) => TimeboxController.createTimeboxCategory(req, res));
 
 // PUT /api/timeboxes/categories/:id - Actualizar categoría
-router.put('/categories/:id', [...idValidation, ...categoryValidation], TimeboxController.updateTimeboxCategory);
+router.put('/categories/:id', [...idValidation, ...categoryValidation], (req, res) => TimeboxController.updateTimeboxCategory(req, res));
 
 // DELETE /api/timeboxes/categories/:id - Eliminar categoría
-router.delete('/categories/:id', idValidation, TimeboxController.deleteTimeboxCategory);
+router.delete('/categories/:id', idValidation, (req, res) => TimeboxController.deleteTimeboxCategory(req, res));
 
 // GET /api/timeboxes/project/:projectId - Obtener timeboxes por proyecto
-router.get('/project/:projectId', projectIdValidation, TimeboxController.getTimeboxesByProject);
+router.get('/project/:projectId', projectIdValidation, (req, res) => TimeboxController.getTimeboxesByProject(req, res));
 
 // POST /api/timeboxes - Crear nuevo timebox
-router.post('/', timeboxValidation, TimeboxController.createTimebox);
+router.post('/', timeboxValidation, (req, res) => TimeboxController.createTimebox(req, res));
 
 // PUT /api/timeboxes/:id - Actualizar timebox
-router.put('/:id', updateTimeboxValidation, TimeboxController.updateTimebox);
+router.put('/:id', updateTimeboxValidation, (req, res) => TimeboxController.updateTimebox(req, res));
 
 // PATCH /api/timeboxes/:id/estado - Actualizar estado del timebox
 router.patch('/:id/estado', [
@@ -132,15 +132,23 @@ router.patch('/:id/estado', [
     }
     return true;
   }).withMessage('Estado inválido')
-], TimeboxController.updateTimeboxEstado);
+], (req, res) => TimeboxController.updateTimeboxEstado(req, res));
 
 // DELETE /api/timeboxes/:id - Eliminar timebox
-router.delete('/:id', idValidation, TimeboxController.deleteTimebox);
+router.delete('/:id', idValidation, (req, res) => TimeboxController.deleteTimebox(req, res));
 
 // GET /api/timeboxes/:id - Obtener timebox por ID (DEBE IR AL FINAL)
-router.get('/:id', idValidation, TimeboxController.getTimeboxById);
+router.get('/:id', idValidation, (req, res) => TimeboxController.getTimeboxById(req, res));
 
 // GET /api/timeboxes/:id/fases - Obtener timebox con fases (DEBE IR AL FINAL)
-router.get('/:id/fases', idValidation, TimeboxController.getTimeboxWithFases);
+router.get('/:id/fases', idValidation, (req, res) => TimeboxController.getTimeboxWithFases(req, res));
 
-module.exports = router; 
+// PUT /api/timeboxes/:id/assign-role - Asignar rol a un timebox
+router.put('/:id/assign-role', [
+  ...idValidation,
+  body('postulacionId').notEmpty().withMessage('ID de postulación requerido'),
+  body('roleKey').notEmpty().withMessage('Rol requerido'),
+  body('developerName').notEmpty().withMessage('Nombre del desarrollador requerido')
+], (req, res) => TimeboxController.assignRoleToTimebox(req, res));
+
+module.exports = router;

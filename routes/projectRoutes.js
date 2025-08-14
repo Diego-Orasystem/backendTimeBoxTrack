@@ -22,7 +22,7 @@ const updateProjectValidation = [
 const contentValidation = [
   body('nombre').notEmpty().withMessage('El nombre del contenido es requerido')
     .isLength({ min: 1, max: 200 }).withMessage('El nombre debe tener entre 1 y 200 caracteres'),
-  body('tipo').notEmpty().isIn(['Carpeta', 'Documento', 'Video', 'Imagen'])
+  body('tipo').notEmpty().isIn(['Carpeta', 'Documento', 'Video', 'Imagen', 'Imágen'])
     .withMessage('Tipo de contenido inválido'),
   body('descripcion').optional().isLength({ max: 500 }).withMessage('La descripción no puede exceder 500 caracteres'),
   body('parentId').optional().custom((value) => {
@@ -109,16 +109,16 @@ router.post('/:projectId/timeboxes', [
     }
     return true;
   }).withMessage('El monto debe ser numérico')
-], TimeboxController.createTimebox);
+], (req, res) => TimeboxController.createTimebox(req, res));
 
 // GET /api/project/:projectId/timeboxes - Obtener timeboxes del proyecto
-router.get('/:projectId/timeboxes', projectIdValidation, TimeboxController.getTimeboxesByProject);
+router.get('/:projectId/timeboxes', projectIdValidation, (req, res) => TimeboxController.getTimeboxesByProject(req, res));
 
 // GET /api/project/:projectId/timeboxes/:timeboxId - Obtener timebox específico
 router.get('/:projectId/timeboxes/:timeboxId', [
   ...projectIdValidation,
   param('timeboxId').notEmpty().withMessage('ID de timebox es requerido')
-], TimeboxController.getTimeboxById);
+], (req, res) => TimeboxController.getTimeboxById(req, res));
 
 // PUT /api/project/:projectId/timeboxes/:timeboxId - Actualizar timebox
 router.put('/:projectId/timeboxes/:timeboxId', [
@@ -141,12 +141,12 @@ router.put('/:projectId/timeboxes/:timeboxId', [
     }
     return true;
   }).withMessage('El monto debe ser numérico')
-], TimeboxController.updateTimebox);
+], (req, res) => TimeboxController.updateTimebox(req, res));
 
 // DELETE /api/project/:projectId/timeboxes/:timeboxId - Eliminar timebox
 router.delete('/:projectId/timeboxes/:timeboxId', [
   ...projectIdValidation,
   param('timeboxId').notEmpty().withMessage('ID de timebox es requerido')
-], TimeboxController.deleteTimebox);
+], (req, res) => TimeboxController.deleteTimebox(req, res));
 
 module.exports = router; 
