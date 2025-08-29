@@ -44,6 +44,7 @@ app.use(cors({
   origin: [
     'http://localhost:4200',
     'http://10.90.0.190:4000',
+    'http://10.90.0.176:4000', // Agregar puerto adicional si es necesario
     'http://10.90.0.190',
     'http://localhost:3000',
     'http://10.90.0.190:3000'
