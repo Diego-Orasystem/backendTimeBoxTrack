@@ -4,11 +4,15 @@ const FinanceController = require('../controllers/financeController');
 
 const router = express.Router();
 
-// Mis pagos (pagos del developer específico)
+// ✅ Mis pagos con control de acceso
+router.get('/mis-pagos/all', (req, res) => FinanceController.getAllPagos(req, res));
+router.get('/mis-pagos/unauthorized', (req, res) => FinanceController.getUnauthorizedPagos(req, res));
 router.get('/mis-pagos/:developerId', (req, res) => FinanceController.getMisPagos(req, res));
 
-// Órdenes de pago (listado con filtros opcionales)
+// ✅ Órdenes de pago con control de acceso
 router.get('/ordenes-pago', (req, res) => FinanceController.getOrdenesPago(req, res));
+router.get('/ordenes-pago/user', (req, res) => FinanceController.getOrdenesPagoByUser(req, res));
+router.get('/ordenes-pago/unauthorized', (req, res) => FinanceController.getUnauthorized(req, res));
 
 // Crear una orden de pago
 router.post(

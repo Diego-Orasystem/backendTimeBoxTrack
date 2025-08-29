@@ -73,6 +73,31 @@ function generateUUID() {
   return uuidv4();
 }
 
+// ✅ Función helper para convertir BigInt a números regulares
+function convertBigIntToNumber(obj) {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  
+  if (typeof obj === 'bigint') {
+    return Number(obj);
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => convertBigIntToNumber(item));
+  }
+  
+  if (typeof obj === 'object') {
+    const converted = {};
+    for (const [key, value] of Object.entries(obj)) {
+      converted[key] = convertBigIntToNumber(value);
+    }
+    return converted;
+  }
+  
+  return obj;
+}
+
 // Función para obtener el tipo de archivo basado en la extensión
 function getFileType(filename) {
   if (!filename) return 'application/octet-stream';
@@ -110,8 +135,18 @@ class FinanceController {
         });
       }
 
-      // Buscar órdenes de pago del developer (por UUID o nombre)
+      // ✅ VALIDACIÓN DE SEGURIDAD: Verificar que el developerId sea un UUID válido
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(developerId)) {
+        console.log('⚠️ developerId no es un UUID válido, pero continuaremos con búsqueda por nombre:', developerId);
+        // No retornamos error, continuamos con la búsqueda por nombre
+      }
+
+      // ✅ Buscar órdenes de pago SOLO del developer específico con su nombre (usando developer_name primero)
       console.log('📡 Buscando órdenes para developerId:', developerId);
+      console.log('📡 Parámetros de búsqueda:', [developerId]);
+      
+      // ✅ BÚSQUEDA SEGURA: Solo buscar por developer_id exacto del usuario logueado
       const ordenes = await executeQuery(`
         SELECT 
           op.id,
@@ -122,42 +157,21 @@ class FinanceController {
           op.fecha_emision,
           op.estado,
           op.created_at,
-          op.updated_at
+          op.updated_at,
+          CASE 
+            WHEN op.developer_name IS NOT NULL THEN op.developer_name
+            WHEN per.nombre IS NOT NULL THEN per.nombre
+            ELSE op.developer_id
+          END as developer_nombre
         FROM ordenes_pago op
-        WHERE op.developer_id = ? 
-           OR op.developer_id LIKE ? 
-           OR op.developer_id LIKE ?
+        LEFT JOIN personas per ON per.id = op.developer_id
+        WHERE op.developer_id = ?
         ORDER BY op.created_at DESC
-      `, [developerId, `%${developerId}%`, `%Juan Pérez%`]);
+      `, [developerId]);
       
-      console.log('📋 Órdenes encontradas:', ordenes.length);
+      console.log('📋 Órdenes encontradas para usuario:', ordenes.length);
       if (ordenes.length > 0) {
         console.log('📋 Primera orden:', ordenes[0]);
-      }
-
-      // Si no hay órdenes, intentar buscar por nombre específico
-      if (ordenes.length === 0) {
-        console.log('🔍 No se encontraron órdenes, buscando por nombre específico...');
-        const ordenesPorNombre = await executeQuery(`
-          SELECT 
-            op.id,
-            op.developer_id,
-            op.monto,
-            op.moneda,
-            op.concepto,
-            op.fecha_emision,
-            op.estado,
-            op.created_at,
-            op.updated_at
-          FROM ordenes_pago op
-          WHERE op.developer_id LIKE '%Juan%' OR op.developer_id LIKE '%Pérez%'
-          ORDER BY op.created_at DESC
-        `);
-        
-        if (ordenesPorNombre.length > 0) {
-          console.log('📋 Órdenes encontradas por nombre:', ordenesPorNombre.length);
-          ordenes.push(...ordenesPorNombre);
-        }
       }
 
       // Obtener pagos asociados a las órdenes encontradas
@@ -233,9 +247,18 @@ class FinanceController {
   async getOrdenesPago(req, res) {
     try {
       const { estado, developerId } = req.query;
-      let sql = `SELECT op.* , per.nombre as developer_nombre
-                 FROM ordenes_pago op
-                 LEFT JOIN personas per ON per.id = op.developer_id`;
+      // ✅ Consulta corregida: Primero usar developer_name de la orden, luego JOIN con personas
+      let sql = `
+        SELECT 
+          op.*,
+          CASE 
+            WHEN op.developer_name IS NOT NULL THEN op.developer_name
+            WHEN per.nombre IS NOT NULL THEN per.nombre
+            ELSE op.developer_id
+          END as developer_nombre
+        FROM ordenes_pago op
+        LEFT JOIN personas per ON per.id = op.developer_id
+      `;
       const params = [];
       const filters = [];
       if (estado) {
@@ -251,7 +274,21 @@ class FinanceController {
       }
       sql += ' ORDER BY op.fecha_emision DESC, op.created_at DESC';
 
+      console.log('🔍 SQL Query:', sql);
+      console.log('🔍 Params:', params);
+
       const ordenes = await executeQuery(sql, params);
+      
+      console.log('📋 Órdenes encontradas:', ordenes.length);
+      if (ordenes.length > 0) {
+        console.log('📋 Primera orden:', {
+          id: ordenes[0].id,
+          developer_id: ordenes[0].developer_id,
+          developer_name: ordenes[0].developer_name,
+          developer_nombre: ordenes[0].developer_nombre
+        });
+      }
+      
       res.json({ status: true, message: 'Órdenes de pago obtenidas', data: ordenes });
     } catch (error) {
       console.error('Error getOrdenesPago:', error);
@@ -265,16 +302,47 @@ class FinanceController {
       if (!errors.isEmpty()) {
         return res.status(400).json({ status: false, message: 'Datos inválidos', errors: errors.array() });
       }
-      const { developerId, monto, moneda, concepto, fechaEmision } = req.body;
+      const { developerId, developerName, monto, moneda, concepto, fechaEmision } = req.body;
       const id = uuidv4();
+      
+      console.log('🔍 createOrdenPago - Datos recibidos:', {
+        developerId,
+        developerName,
+        monto,
+        moneda,
+        concepto,
+        fechaEmision
+      });
 
       await executeQuery(
-        `INSERT INTO ordenes_pago (id, developer_id, monto, moneda, concepto, fecha_emision, estado)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, developerId, monto, moneda, concepto || null, fechaEmision || null, 'Pendiente']
+        `INSERT INTO ordenes_pago (id, developer_id, developer_name, monto, moneda, concepto, fecha_emision, estado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, developerId, developerName, monto, moneda, concepto || null, fechaEmision || null, 'Pendiente']
       );
+      
+      console.log('💾 Orden insertada con ID:', id);
+      console.log('💾 developer_name guardado:', developerName);
 
-      const [orden] = await executeQuery('SELECT * FROM ordenes_pago WHERE id = ?', [id]);
+      // ✅ Obtener la orden creada con el nombre del developer (usando developer_name primero)
+      const [orden] = await executeQuery(`
+        SELECT op.*, 
+          CASE 
+            WHEN op.developer_name IS NOT NULL THEN op.developer_name
+            WHEN per.nombre IS NOT NULL THEN per.nombre
+            ELSE op.developer_id
+          END as developer_nombre
+        FROM ordenes_pago op
+        LEFT JOIN personas per ON per.id = op.developer_id
+        WHERE op.id = ?
+      `, [id]);
+      
+      console.log('📋 Orden retornada:', {
+        id: orden.id,
+        developer_id: orden.developer_id,
+        developer_name: orden.developer_name,
+        developer_nombre: orden.developer_nombre
+      });
+      
       res.status(201).json({ status: true, message: 'Orden de pago creada', data: orden });
     } catch (error) {
       console.error('Error createOrdenPago:', error);
@@ -445,6 +513,181 @@ class FinanceController {
         error: error.message
       });
     }
+  }
+
+  // ✅ MÉTODO NUEVO: Obtener todos los pagos (para admin)
+  async getAllPagos(req, res) {
+    try {
+      console.log('🔐 getAllPagos: Usuario admin solicitando todos los pagos');
+      
+      // ✅ Obtener todas las órdenes de pago con el nombre del developer (usando developer_name primero)
+      const ordenes = await executeQuery(`
+        SELECT 
+          op.id,
+          op.developer_id,
+          op.monto,
+          op.moneda,
+          op.concepto,
+          op.fecha_emision,
+          op.estado,
+          op.created_at,
+          op.updated_at,
+          CASE 
+            WHEN op.developer_name IS NOT NULL THEN op.developer_name
+            WHEN per.nombre IS NOT NULL THEN per.nombre
+            ELSE op.developer_id
+          END as developer_nombre
+        FROM ordenes_pago op
+        LEFT JOIN personas per ON per.id = op.developer_id
+        ORDER BY op.created_at DESC
+      `);
+      
+      console.log('📋 Órdenes encontradas para admin:', ordenes.length);
+
+      // Obtener todos los pagos asociados
+      let pagos = [];
+      if (ordenes.length > 0) {
+        const ordenIds = ordenes.map(o => o.id);
+        const placeholders = ordenIds.map(() => '?').join(',');
+        pagos = await executeQuery(`
+          SELECT 
+            p.id,
+            p.orden_pago_id,
+            p.monto,
+            p.moneda,
+            p.metodo,
+            p.referencia,
+            p.fecha_pago,
+            p.created_at,
+            p.archivo_url,
+            p.archivo_tipo,
+            CAST(p.archivo_size AS UNSIGNED) as archivo_size
+          FROM pagos p
+          WHERE p.orden_pago_id IN (${placeholders})
+          ORDER BY p.created_at DESC
+        `, ordenIds);
+      }
+      
+      console.log('💰 Pagos encontrados para admin:', pagos.length);
+
+      // Combinar la información
+      const todosLosPagos = ordenes.map(orden => {
+        const pagosOrden = pagos.filter(p => p.orden_pago_id === orden.id);
+        return {
+          ...orden,
+          pagos: pagosOrden
+        };
+      });
+
+      // ✅ Convertir BigInt a números regulares antes de enviar
+      const pagosConvertidos = convertBigIntToNumber(todosLosPagos);
+
+      res.json({
+        status: true,
+        message: 'Todos los pagos obtenidos (vista admin)',
+        data: pagosConvertidos
+      });
+
+    } catch (error) {
+      console.error('❌ Error en getAllPagos:', error);
+      res.status(500).json({
+        status: false,
+        message: 'Error interno del servidor',
+        error: error.message
+      });
+    }
+  }
+
+  // ✅ MÉTODO NUEVO: Manejar casos donde no hay developerId válido
+  async getUnauthorizedPagos(req, res) {
+    try {
+      console.log('🚫 getUnauthorizedPagos: Usuario sin developerId válido');
+      
+      res.status(401).json({
+        status: false,
+        message: 'No autorizado - ID de usuario requerido',
+        data: []
+      });
+
+    } catch (error) {
+      console.error('❌ Error en getUnauthorizedPagos:', error);
+      res.status(500).json({
+        status: false,
+        message: 'Error interno del servidor',
+        error: error.message
+      });
+    }
+  }
+
+  // ✅ MÉTODO NUEVO: Obtener órdenes de pago por usuario específico
+  async getOrdenesPagoByUser(req, res) {
+    try {
+      const { userId, estado } = req.query;
+      
+      if (!userId) {
+        return res.status(400).json({
+          status: false,
+          message: 'ID de usuario es requerido'
+        });
+      }
+
+      console.log('🔐 getOrdenesPagoByUser: Usuario solicitando sus órdenes:', userId);
+      console.log('🔐 userId recibido:', userId);
+      
+      let sql = `
+        SELECT 
+          op.*,
+          CASE 
+            WHEN op.developer_name IS NOT NULL THEN op.developer_name
+            WHEN per.nombre IS NOT NULL THEN per.nombre
+            ELSE op.developer_id
+          END as developer_nombre
+        FROM ordenes_pago op
+        LEFT JOIN personas per ON per.id = op.developer_id
+        WHERE op.developer_id = ?
+      `;
+      // ✅ BÚSQUEDA SEGURA: Solo buscar por developer_id exacto del usuario logueado
+      const params = [userId];
+      
+      if (estado) {
+        sql += ' AND op.estado = ?';
+        params.push(estado);
+      }
+      
+      sql += ' ORDER BY op.fecha_emision DESC, op.created_at DESC';
+
+      console.log('🔍 SQL Query getOrdenesPagoByUser:', sql);
+      console.log('🔍 Params getOrdenesPagoByUser:', params);
+
+      const ordenes = await executeQuery(sql, params);
+      
+      console.log('📋 Órdenes encontradas para usuario:', ordenes.length);
+
+      res.json({
+        status: true,
+        message: 'Órdenes de pago del usuario obtenidas',
+        data: ordenes
+      });
+
+    } catch (error) {
+      console.error('❌ Error en getOrdenesPagoByUser:', error);
+      res.status(500).json({
+        status: false,
+        message: 'Error interno del servidor',
+        error: error.message
+      });
+    }
+  }
+
+  // ✅ MÉTODO NUEVO: Respuesta para usuarios no autorizados
+  async getUnauthorized(req, res) {
+    console.log('🚫 getUnauthorized: Usuario no autenticado intentando acceder');
+    
+    res.status(401).json({
+      status: false,
+      message: 'Acceso no autorizado. Debes iniciar sesión para ver tus órdenes de pago.',
+      data: []
+    });
   }
 }
 

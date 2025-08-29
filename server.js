@@ -15,6 +15,11 @@ const timeboxMaintainerRoutes = require('./routes/timeboxMaintainerRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const personaRoutes = require('./routes/personaRoutes');
 const financeRoutes = require('./routes/financeRoutes');
+const userRoutes = require('./routes/userRoutes');
+const roleRoutes = require('./routes/roleRoutes');
+const publicacionAutomaticaRoutes = require('./routes/publicacionAutomaticaRoutes');
+// const authRoutes = require('./routes/authRoutes'); // Archivo no existe
+const adminRoutes = require('./routes/adminRoutes');
 
 // Importar middleware de manejo de errores
 const errorHandler = require('./middleware/errorHandler');
@@ -70,24 +75,33 @@ app.get('/api', (req, res) => {
     status: true,
     message: 'API de Timebox Tracking',
     version: '1.0.0',
-    endpoints: {
-      timeboxes: '/api/timeboxes',
-      project: '/api/project',
-      personas: '/api/personas',
-      upload: '/api/upload',
-      health: '/health'
-    },
+            endpoints: {
+          timeboxes: '/api/timeboxes',
+          project: '/api/project',
+          personas: '/api/personas',
+          upload: '/api/upload',
+          finanzas: '/api/finanzas',
+          users: '/api/users',
+          roles: '/api/roles',
+          publicaciones: '/api/publicaciones',
+          health: '/health'
+        },
     documentation: 'Documentación disponible en /api/docs'
   });
 });
 
 // Rutas de la API
-app.use('/api/timeboxes', timeboxRoutes);
-app.use('/api/project', projectRoutes);
-app.use('/api/timebox/maintainer', timeboxMaintainerRoutes);
-app.use('/api/upload', uploadRoutes);
+// app.use('/api/auth', authRoutes); // Comentado porque authRoutes no existe
+app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/roles', roleRoutes);
+app.use('/api/publicaciones', publicacionAutomaticaRoutes);
+app.use('/api/finanzas', financeRoutes); // Corregido para coincidir con frontend
 app.use('/api/personas', personaRoutes);
-app.use('/api/finanzas', financeRoutes);
+app.use('/api/project', projectRoutes);
+app.use('/api/timeboxes', timeboxRoutes);
+app.use('/api/timebox-maintainer', timeboxMaintainerRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Middleware para rutas no encontradas
 app.use('*', (req, res) => {

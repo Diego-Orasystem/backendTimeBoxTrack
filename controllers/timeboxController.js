@@ -293,15 +293,15 @@ class TimeboxController {
       if (fases) {
         await this.savePhasesToDatabase(timeboxIdToUse, fases);
         
-        // Lógica de avance de fases
+        // ✅ LÓGICA MEJORADA de avance de fases
         if (fases.planning && fases.planning.completada) {
-          console.log('Fase planning completada, verificando avance a kickoff');
+          console.log('🔍 Fase planning completada, verificando avance a kickoff');
           
           // Verificar si ya existe la fase kickoff
           const [existingKickoff] = await executeQuery('SELECT * FROM kickoff_phases WHERE timebox_id = ?', [timeboxIdToUse]);
           
           if (!existingKickoff) {
-            console.log('Creando fase kickoff automáticamente');
+            console.log('🔍 Creando fase kickoff automáticamente');
             const kickoffId = uuidv4();
             await executeQuery(`
               INSERT INTO kickoff_phases (id, timebox_id, created_at, updated_at)
@@ -309,14 +309,46 @@ class TimeboxController {
             `, [kickoffId, timeboxIdToUse]);
           }
           
-          // Cambiar estado a "En Ejecucion" si aún no lo está (cubriendo Disponible/Definición/otros)
-          if (existingTimebox.estado !== 'En Ejecucion') {
-            console.log('Cambiando estado a En Ejecucion (desde: ' + existingTimebox.estado + ')');
+          // ✅ IMPORTANTE: NO cambiar automáticamente a "En Ejecución" si el frontend envía un estado específico
+          // Solo cambiar si NO se está enviando un estado desde el frontend
+          if (!estado && existingTimebox.estado !== 'En Ejecucion') {
+            console.log('🔍 Cambiando estado a En Ejecucion (desde: ' + existingTimebox.estado + ')');
             await executeQuery(`
               UPDATE timeboxes 
               SET estado = 'En Ejecucion', updated_at = CURRENT_TIMESTAMP 
               WHERE id = ?
             `, [timeboxIdToUse]);
+          } else if (estado) {
+            console.log('🔍 Frontend envió estado específico:', estado, '- No cambiando automáticamente');
+          }
+        }
+        
+        // ✅ LÓGICA NUEVA: Si se está completando la fase Close, verificar si todas las fases están completadas
+        if (fases.close && fases.close.completada) {
+          console.log('🔍 Fase Close completada, verificando si todas las fases están completadas');
+          
+          // Obtener el estado actual de todas las fases
+          const [planningPhase] = await executeQuery('SELECT completada FROM planning_phases WHERE timebox_id = ?', [timeboxIdToUse]);
+          const [kickoffPhase] = await executeQuery('SELECT completada FROM kickoff_phases WHERE timebox_id = ?', [timeboxIdToUse]);
+          const [refinementPhase] = await executeQuery('SELECT completada FROM refinement_phases WHERE timebox_id = ?', [timeboxIdToUse]);
+          const [qaPhase] = await executeQuery('SELECT completada FROM qa_phases WHERE timebox_id = ?', [timeboxIdToUse]);
+          
+          const todasLasFasesCompletadas = 
+            planningPhase?.completada && 
+            kickoffPhase?.completada && 
+            refinementPhase?.completada && 
+            qaPhase?.completada && 
+            fases.close.completada;
+          
+          if (todasLasFasesCompletadas) {
+            console.log('🔍 Todas las fases completadas → Cambiando estado a Finalizado');
+            await executeQuery(`
+              UPDATE timeboxes 
+              SET estado = 'Finalizado', updated_at = CURRENT_TIMESTAMP 
+              WHERE id = ?
+            `, [timeboxIdToUse]);
+          } else {
+            console.log('🔍 No todas las fases están completadas, manteniendo estado actual');
           }
         }
       }
@@ -1970,6 +2002,83 @@ class TimeboxController {
       });
     } catch (error) {
       console.error('Error al asignar rol:', error);
+      res.status(500).json({
+        status: false,
+        message: 'Error interno del servidor',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Rechaza una postulación para un timebox
+   */
+  async rejectPostulation(req, res) {
+    try {
+      const { id } = req.params;
+      const { postulacionId, motivo } = req.body;
+      
+      console.log('Rechazando postulación:', {
+        timeboxId: id,
+        postulacionId,
+        motivo
+      });
+
+      // Verificar que el timebox existe
+      const [existingTimebox] = await executeQuery('SELECT * FROM timeboxes WHERE id = ?', [id]);
+      if (!existingTimebox) {
+        return res.status(404).json({
+          status: false,
+          message: 'Timebox no encontrado'
+        });
+      }
+
+      // Verificar que la postulación existe y está pendiente
+      const [postulacion] = await executeQuery(`
+        SELECT p.*, po.timebox_id
+        FROM postulaciones p
+        JOIN publicacion_ofertas po ON p.publicacion_id = po.id
+        WHERE p.id = ? AND po.timebox_id = ?
+      `, [postulacionId, id]);
+
+      if (!postulacion) {
+        return res.status(404).json({
+          status: false,
+          message: 'Postulación no encontrada'
+        });
+      }
+
+      if (postulacion.estado_solicitud !== 'Pendiente') {
+        return res.status(400).json({
+          status: false,
+          message: 'La postulación ya no está pendiente'
+        });
+      }
+
+      // Actualizar la postulación a rechazada
+      await executeQuery(`
+        UPDATE postulaciones
+        SET estado_solicitud = 'Rechazada',
+            motivo_rechazo = ?,
+            fecha_rechazo = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [motivo || 'Rechazada por el administrador', postulacionId]);
+
+      console.log('Postulación rechazada exitosamente:', postulacionId);
+
+      res.json({
+        status: true,
+        message: 'Postulación rechazada exitosamente',
+        data: {
+          postulacionId,
+          estado: 'Rechazada',
+          motivo: motivo || 'Rechazada por el administrador'
+        }
+      });
+
+    } catch (error) {
+      console.error('Error al rechazar postulación:', error);
       res.status(500).json({
         status: false,
         message: 'Error interno del servidor',
