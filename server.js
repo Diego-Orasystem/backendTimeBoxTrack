@@ -47,7 +47,8 @@ app.use(cors({
     'http://10.90.0.176:4000', // Agregar puerto adicional si es necesario
     'http://10.90.0.190',
     'http://localhost:3000',
-    'http://10.90.0.190:3000'
+    'http://10.90.0.190:3000',
+    'https://timeboxtrack.fitschile.cl'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
