@@ -9,8 +9,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: timebox_tracking
-      MYSQL_USER: timebox_user
-      MYSQL_PASSWORD: timebox_password
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
     ports:
       - "3306:3306"
     volumes:

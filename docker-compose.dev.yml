@@ -39,10 +39,10 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3000
-      - DB_HOST=database
+      - DB_HOST=localhost
       - DB_PORT=3306
-      - DB_USER=timebox_user
-      - DB_PASSWORD=timebox_password
+      - DB_USER=root
+      - DB_PASSWORD=root
       - DB_NAME=timebox_tracking
       - DB_CONNECTION_LIMIT=10
       - JWT_SECRET=dev_jwt_secret_key
