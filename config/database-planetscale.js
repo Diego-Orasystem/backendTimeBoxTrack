@@ -2,20 +2,47 @@ const mariadb = require('mariadb');
 require('dotenv').config();
 
 // Configuración específica para PlanetScale
-const pool = mariadb.createPool({
-  host: process.env.DB_HOST || 'aws.connect.psdb.cloud',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'root',
-  database: process.env.DB_NAME || 'timebox_tracking',
-  connectionLimit: process.env.DB_CONNECTION_LIMIT || 10,
+const dbConfig = {
+  host: 'localhost',
+  port: 3306,
+  user: 'root',
+  password: 'root',
+  database: 'timebox_tracking',
+  connectionLimit: 10,
   acquireTimeout: 10000,
   timeout: 10000,
   reconnect: true,
   ssl: {
     rejectUnauthorized: true
   }
-});
+};
+
+const pool = mariadb.createPool(dbConfig);
+
+// Función para mostrar configuración de forma segura
+function logDatabaseConfig() {
+  console.log('🔧 Variables de configuración de base de datos (PlanetScale):');
+  console.log(`   Host: ${dbConfig.host}`);
+  console.log(`   Puerto: ${dbConfig.port}`);
+  console.log(`   Usuario: ${dbConfig.user}`);
+  console.log(`   Contraseña: ${'*'.repeat(dbConfig.password.length)}`);
+  console.log(`   Base de datos: ${dbConfig.database}`);
+  console.log(`   Límite de conexiones: ${dbConfig.connectionLimit}`);
+  console.log(`   Timeout de adquisición: ${dbConfig.acquireTimeout}ms`);
+  console.log(`   Timeout general: ${dbConfig.timeout}ms`);
+  console.log(`   Reconexión automática: ${dbConfig.reconnect ? 'Sí' : 'No'}`);
+  console.log(`   SSL: ${dbConfig.ssl ? 'Habilitado' : 'Deshabilitado'}`);
+  if (dbConfig.ssl) {
+    console.log(`   SSL RejectUnauthorized: ${dbConfig.ssl.rejectUnauthorized}`);
+  }
+  console.log('📋 Variables de entorno utilizadas:');
+  console.log(`   DB_HOST: ${process.env.DB_HOST || 'No definida (usando valor por defecto)'}`);
+  console.log(`   DB_PORT: ${process.env.DB_PORT || 'No definida (usando valor por defecto)'}`);
+  console.log(`   DB_USER: ${process.env.DB_USER || 'No definida (usando valor por defecto)'}`);
+  console.log(`   DB_PASSWORD: ${process.env.DB_PASSWORD ? 'Definida' : 'No definida (usando valor por defecto)'}`);
+  console.log(`   DB_NAME: ${process.env.DB_NAME || 'No definida (usando valor por defecto)'}`);
+  console.log(`   DB_CONNECTION_LIMIT: ${process.env.DB_CONNECTION_LIMIT || 'No definida (usando valor por defecto)'}`);
+}
 
 // Función para probar la conexión
 async function testConnection() {
@@ -26,6 +53,8 @@ async function testConnection() {
     return true;
   } catch (err) {
     console.error('❌ Error al conectar con PlanetScale:', err.message);
+    console.error('📋 Detalles del error:', err);
+    logDatabaseConfig();
     return false;
   } finally {
     if (conn) conn.release();
@@ -41,6 +70,8 @@ async function executeQuery(sql, params = []) {
     return result;
   } catch (err) {
     console.error('Error ejecutando consulta:', err);
+    console.error('🔧 Configuración de base de datos en el momento del error:');
+    logDatabaseConfig();
     throw err;
   } finally {
     if (conn) conn.release();
@@ -65,6 +96,8 @@ async function executeTransaction(queries) {
   } catch (err) {
     if (conn) await conn.rollback();
     console.error('Error en transacción:', err);
+    console.error('🔧 Configuración de base de datos en el momento del error:');
+    logDatabaseConfig();
     throw err;
   } finally {
     if (conn) conn.release();
