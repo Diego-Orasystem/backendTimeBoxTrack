@@ -3,6 +3,9 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 // Importar configuración de base de datos
@@ -48,7 +51,8 @@ app.use(cors({
     'http://10.90.0.190',
     'http://localhost:3000',
     'http://10.90.0.190:3000',
-    'https://timeboxtrack.fitschile.cl'
+    'https://timeboxtrack.fitschile.cl',
+    'https://10.90.0.190:3000' // HTTPS del backend
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -118,6 +122,24 @@ app.use('*', (req, res) => {
 // Middleware de manejo de errores (debe ir al final)
 app.use(errorHandler);
 
+// Función para cargar certificados SSL
+function loadSSLCertificates() {
+  const certPath = path.join(__dirname, 'ssl', 'cert.pem');
+  const keyPath = path.join(__dirname, 'ssl', 'key.pem');
+  
+  try {
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      return {
+        cert: fs.readFileSync(certPath),
+        key: fs.readFileSync(keyPath)
+      };
+    }
+  } catch (error) {
+    console.warn('⚠️ No se pudieron cargar los certificados SSL:', error.message);
+  }
+  return null;
+}
+
 // Función para iniciar el servidor
 async function startServer() {
   try {
@@ -128,14 +150,32 @@ async function startServer() {
       process.exit(1);
     }
 
-    // Iniciar servidor
-    app.listen(PORT, () => {
-      console.log(`🚀 Servidor iniciado en puerto ${PORT}`);
-      console.log(`📊 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔗 URL: http://localhost:${PORT}`);
-      console.log(`🏥 Health check: http://localhost:${PORT}/health`);
-      console.log(`📚 API: http://localhost:${PORT}/api`);
-    });
+    const sslOptions = loadSSLCertificates();
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    if (sslOptions && isProduction) {
+      // Iniciar servidor HTTPS
+      const httpsServer = https.createServer(sslOptions, app);
+      httpsServer.listen(PORT, () => {
+        console.log(`🚀 Servidor HTTPS iniciado en puerto ${PORT}`);
+        console.log(`📊 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`🔗 URL: https://10.90.0.190:${PORT}`);
+        console.log(`🏥 Health check: https://10.90.0.190:${PORT}/health`);
+        console.log(`📚 API: https://10.90.0.190:${PORT}/api`);
+      });
+    } else {
+      // Iniciar servidor HTTP (desarrollo)
+      app.listen(PORT, () => {
+        console.log(`🚀 Servidor HTTP iniciado en puerto ${PORT}`);
+        console.log(`📊 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`🔗 URL: http://localhost:${PORT}`);
+        console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+        console.log(`📚 API: http://localhost:${PORT}/api`);
+        if (!sslOptions) {
+          console.log('⚠️ Para producción, configure certificados SSL en la carpeta ssl/');
+        }
+      });
+    }
   } catch (error) {
     console.error('❌ Error al iniciar el servidor:', error);
     process.exit(1);
