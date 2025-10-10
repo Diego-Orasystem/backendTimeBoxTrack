@@ -7,7 +7,7 @@ const dbConfig = {
   port: 3306,
   user: 'root',
   password: 'root',
-  database: 'timebox_tracking',
+  database: 'timebox-tracking',
   connectionLimit: 10,
   acquireTimeout: 10000,
   timeout: 10000,
