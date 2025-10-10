@@ -3,7 +3,7 @@ require('dotenv').config();
 
 // Configuración de la base de datos
 const dbConfig = {
-  host: 'localhost',
+  host: '10.90.0.190',
   port: 3306,
   user: 'root',
   password: 'root',
