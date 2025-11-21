@@ -24,7 +24,7 @@ class TimeboxMaintainerController {
         error: error.message
       });
     }
-  }
+  } 
 
   // Crear nueva categoría
   static async createCategory(req, res) {
