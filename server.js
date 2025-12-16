@@ -20,6 +20,8 @@ const personaRoutes = require('./routes/personaRoutes');
 const financeRoutes = require('./routes/financeRoutes');
 const userRoutes = require('./routes/userRoutes');
 const roleRoutes = require('./routes/roleRoutes');
+const productRoutes = require('./routes/productRoutes');
+const entregableRoutes = require('./routes/entregableRoutes');
 const publicacionAutomaticaRoutes = require('./routes/publicacionAutomaticaRoutes');
 // const authRoutes = require('./routes/authRoutes'); // Archivo no existe
 const adminRoutes = require('./routes/adminRoutes');
@@ -82,6 +84,8 @@ app.get('/api', (req, res) => {
     message: 'API de Timebox Tracking',
     version: '1.0.0',
             endpoints: {
+          products: '/api/products',
+          entregables: '/api/entregables',
           timeboxes: '/api/timeboxes',
           project: '/api/project',
           personas: '/api/personas',
@@ -108,6 +112,8 @@ app.use('/api/project', projectRoutes);
 app.use('/api/timeboxes', timeboxRoutes);
 app.use('/api/timebox-maintainer', timeboxMaintainerRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/product', productRoutes);
+app.use('/api/entregables', entregableRoutes);
 
 // Middleware para rutas no encontradas
 app.use('*', (req, res) => {

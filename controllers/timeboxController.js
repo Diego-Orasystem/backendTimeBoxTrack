@@ -182,41 +182,25 @@ class TimeboxController {
         });
       }
 
-      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta } = req.body;
+      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta, entregableId } = req.body;
       const id = uuidv4();
       
       const sql = `
-        INSERT INTO timeboxes (id, tipo_timebox_id, business_analyst_id, project_id, monto, estado)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO timeboxes (id, tipo_timebox_id, business_analyst_id, project_id, monto, estado, entregable_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
       
-      await executeQuery(sql, [id, tipoTimeboxId, businessAnalystId || null, projectId, monto || null, estado || 'En Definicion']);
+      await executeQuery(sql, [
+        id, 
+        tipoTimeboxId, 
+        businessAnalystId || null, 
+        projectId, 
+        monto || null, 
+        estado || 'En Definicion', 
+        entregableId || null  // ← Aquí estaba el problema, ya está bien
+      ]);
 
-      // Guardar las fases si existen
-      if (fases) {
-        await this.savePhasesToDatabase(id, fases);
-      }
-      
-      // Obtener el timebox creado con sus fases
-      const [newTimebox] = await executeQuery(`
-        SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
-               per.nombre as business_analyst_nombre
-        FROM timeboxes t
-        LEFT JOIN timebox_types tt ON t.tipo_timebox_id = tt.id
-        LEFT JOIN projects p ON t.project_id = p.id
-        LEFT JOIN personas per ON t.business_analyst_id = per.id
-        WHERE t.id = ?
-      `, [id]);
-
-      // Cargar las fases del timebox
-      const loadedFases = await this.loadPhasesFromDatabase(id);
-      newTimebox.fases = loadedFases;
-      
-      res.status(201).json({
-        status: true,
-        message: 'Timebox creado exitosamente',
-        data: newTimebox
-      });
+      // ...existing code...
     } catch (error) {
       console.error('Error al crear timebox:', error);
       res.status(500).json({
@@ -226,6 +210,7 @@ class TimeboxController {
       });
     }
   }
+
 
   // Actualizar timebox
   async updateTimebox(req, res) {
@@ -281,6 +266,10 @@ class TimeboxController {
       if (estado !== undefined) {
         updates.push('estado = ?');
         values.push(estado);
+      }
+      if (entregableId !== undefined) {
+        updates.push('entregable_id = ?');
+        values.push(entregableId);
       }
       
       updates.push('updated_at = CURRENT_TIMESTAMP');
@@ -543,16 +532,16 @@ class TimeboxController {
       const { projectId } = req.params;
       console.log('Buscando timeboxes para proyecto:', projectId);
       
-      const sql = `
-        SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
-               per.nombre as business_analyst_nombre
-        FROM timeboxes t
-        LEFT JOIN timebox_types tt ON t.tipo_timebox_id = tt.id
-        LEFT JOIN projects p ON t.project_id = p.id
-        LEFT JOIN personas per ON t.business_analyst_id = per.id
-        WHERE t.project_id = ?
-        ORDER BY t.created_at DESC
-      `;
+         const sql = `
+      SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
+             per.nombre as business_analyst_nombre
+      FROM timeboxes t
+      LEFT JOIN timebox_types tt ON t.tipo_timebox_id COLLATE utf8mb4_general_ci = tt.id COLLATE utf8mb4_general_ci
+      LEFT JOIN product p ON t.project_id COLLATE utf8mb4_general_ci = p.id COLLATE utf8mb4_general_ci
+      LEFT JOIN personas per ON t.business_analyst_id COLLATE utf8mb4_general_ci = per.id COLLATE utf8mb4_general_ci
+      WHERE t.project_id = ?
+      ORDER BY t.created_at DESC
+    `;
       
       const timeboxes = await executeQuery(sql, [projectId]);
       console.log('Timeboxes encontrados:', timeboxes.map(t => ({ id: t.id, estado: t.estado })));
@@ -2175,6 +2164,21 @@ class TimeboxController {
     }
   }
 
+  async findByEntregableId(entregableId) {
+    try {
+      const results = await executeQuery(`
+        SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre
+        FROM timeboxes t
+        LEFT JOIN timebox_types tt ON t.tipo_timebox_id = tt.id
+        LEFT JOIN entregable p ON t.entregable_id = p.id
+        WHERE t.entregable_id = ?
+      `, [entregableId]);
+      return results;
+    } catch (error) {
+      console.error('Error buscando timebox por entregableId:', error);
+      throw error;
+    }
+  }
 }
 
 // Crear una instancia del controlador
