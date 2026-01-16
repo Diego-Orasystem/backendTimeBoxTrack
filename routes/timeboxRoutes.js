@@ -134,6 +134,19 @@ router.patch('/:id/estado', [
   }).withMessage('Estado inválido')
 ], (req, res) => timeboxController.updateTimeboxEstado(req, res));
 
+// PUT /api/timeboxes/:id/orden - Actualizar solo el orden del timebox
+router.put('/:id/orden', [
+  ...idValidation,
+  body('orden')
+    .notEmpty().withMessage('El orden es requerido')
+    .custom((value) => {
+      if (isNaN(value)) {
+        throw new Error('El orden debe ser numérico');
+      }
+      return true;
+    }).withMessage('El orden debe ser numérico')
+], (req, res) => timeboxController.updateTimeboxOrden(req, res));
+
 // DELETE /api/timeboxes/:id - Eliminar timebox
 router.delete('/:id', idValidation, (req, res) => timeboxController.deleteTimebox(req, res));
 

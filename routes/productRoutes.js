@@ -77,3 +77,48 @@ router.delete('/:id', idValidation, ProductController.deleteProduct);
 // GET /api/products/:projectId/timeboxes - Obtener timeboxes por ID de producto
 router.get('/:projectId/timeboxes', projectIdValidation, (req, res) => TimeboxController.getTimeboxesByProject(req, res));
 module.exports = router;
+
+// POST /api/project/:projectId/timeboxes - Crear timebox
+router.post('/:projectId/timeboxes', [
+  ...projectIdValidation,
+  body('tipoTimeboxId').notEmpty().withMessage('El tipo de timebox es requerido'),
+  body('estado').optional().custom((value) => {
+    const estadosValidos = ['En Definición', 'En Definicion', 'Disponible', 'En Ejecución', 'En Ejecucion', 'Finalizado'];
+    if (!estadosValidos.includes(value)) {
+      throw new Error('Estado inválido');
+    }
+    return true;
+  }).withMessage('Estado inválido'),
+  body('monto').optional().custom((value) => {
+    if (value === null || value === undefined) {
+      return true; // Permitir null/undefined
+    }
+    if (isNaN(value)) {
+      throw new Error('El monto debe ser numérico');
+    }
+    return true;
+  }).withMessage('El monto debe ser numérico')
+], (req, res) => TimeboxController.createTimebox(req, res));
+
+// PUT /api/project/:projectId/timeboxes/:timeboxId - Actualizar timebox
+router.put('/:projectId/timeboxes/:timeboxId', [
+  ...projectIdValidation,
+  param('timeboxId').notEmpty().withMessage('ID de timebox es requerido'),
+  body('tipoTimeboxId').optional().notEmpty().withMessage('El tipo de timebox no puede estar vacío'),
+  body('estado').optional().custom((value) => {
+    const estadosValidos = ['En Definición', 'En Definicion', 'Disponible', 'En Ejecución', 'En Ejecucion', 'Finalizado'];
+    if (!estadosValidos.includes(value)) {
+      throw new Error('Estado inválido');
+    }
+    return true;
+  }).withMessage('Estado inválido'),
+  body('monto').optional().custom((value) => {
+    if (value === null || value === undefined) {
+      return true; // Permitir null/undefined
+    }
+    if (isNaN(value)) {
+      throw new Error('El monto debe ser numérico');
+    }
+    return true;
+  }).withMessage('El monto debe ser numérico')
+], (req, res) => TimeboxController.updateTimebox(req, res));

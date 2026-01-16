@@ -197,10 +197,40 @@ class TimeboxController {
         projectId, 
         monto || null, 
         estado || 'En Definicion', 
-        entregableId || null  // ← Aquí estaba el problema, ya está bien
+        entregableId || null
       ]);
+      // Guardar fases (incluye planning) si vienen en el body
+      if (fases) {
+        await this.savePhasesToDatabase(id, fases);
+      }
 
-      // ...existing code...
+      // Guardar publicación de oferta si viene en el body
+      if (publicacionOferta) {
+        await this.savePublicacionOfertaToDatabase(id, publicacionOferta);
+      }
+
+      // Cargar el timebox recién creado con sus relaciones para devolver al frontend
+      const [newTimebox] = await executeQuery(`
+        SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
+               per.nombre as business_analyst_nombre
+        FROM timeboxes t
+        LEFT JOIN timebox_types tt ON t.tipo_timebox_id = tt.id
+        LEFT JOIN projects p ON t.project_id = p.id
+        LEFT JOIN personas per ON t.business_analyst_id = per.id
+        WHERE t.id = ?
+      `, [id]);
+
+      const loadedFases = await this.loadPhasesFromDatabase(id);
+      newTimebox.fases = loadedFases;
+
+      const loadedPublicacionOferta = await this.loadPublicacionOfertaFromDatabase(id);
+      newTimebox.publicacionOferta = loadedPublicacionOferta;
+
+      return res.status(201).json({
+        status: true,
+        message: 'Timebox creado exitosamente',
+        data: newTimebox
+      });
     } catch (error) {
       console.error('Error al crear timebox:', error);
       res.status(500).json({
@@ -215,8 +245,9 @@ class TimeboxController {
   // Actualizar timebox
   async updateTimebox(req, res) {
     try {
+      console.log("Entra a updateTimebox");
       const { id, timeboxId } = req.params;
-      const timeboxIdToUse = timeboxId || id; // Usar timeboxId si existe, sino usar id
+      const timeboxIdToUse = timeboxId || id; 
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({
@@ -226,14 +257,8 @@ class TimeboxController {
         });
       }
 
-      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta } = req.body;
-      
-      // Debug: verificar qué está recibiendo el backend
-      console.log('🔍 Backend updateTimebox - body completo:', req.body);
-      console.log('🔍 Backend updateTimebox - fases recibidas:', fases);
-      console.log('🔍 Backend updateTimebox - planning recibido:', fases?.planning);
-      console.log('🔍 Backend updateTimebox - teamLeader recibido:', fases?.planning?.teamLeader);
-      
+      const { tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta, entregableId } = req.body;
+      console.log("Datos recibidos para updateTimebox:", {tipoTimeboxId, projectId, businessAnalystId, monto, estado, fases, entrega, publicacionOferta, entregableId});
       // Verificar que el timebox existe
       const [existingTimebox] = await executeQuery('SELECT * FROM timeboxes WHERE id = ?', [timeboxIdToUse]);
       if (!existingTimebox) {
@@ -267,16 +292,32 @@ class TimeboxController {
         updates.push('estado = ?');
         values.push(estado);
       }
+
+      // Determinar qué valor de entregable_id guardar
+      let entregableIdToSave;
       if (entregableId !== undefined) {
+        entregableIdToSave = entregableId;
+      } else if (fases && fases.planning && fases.planning.entregableId !== undefined) {
+        entregableIdToSave = fases.planning.entregableId;
+      }
+
+      if (entregableIdToSave !== undefined) {
         updates.push('entregable_id = ?');
-        values.push(entregableId);
+        console.log("Actualizando entregable_id a:", entregableIdToSave);
+        values.push(entregableIdToSave);
       }
       
       updates.push('updated_at = CURRENT_TIMESTAMP');
       values.push(timeboxIdToUse);
       
       const sql = `UPDATE timeboxes SET ${updates.join(', ')} WHERE id = ?`;
-      await executeQuery(sql, values);
+      console.log('🔍 SQL de actualización:', sql, 'con valores:', values);
+      const updateResult = await executeQuery(sql, values);
+      console.log('🔍 Resultado UPDATE timeboxes:', updateResult);
+
+      // Verificar qué quedó grabado en BD para este timebox
+      const [checkRow] = await executeQuery('SELECT id, entregable_id FROM timeboxes WHERE id = ?', [timeboxIdToUse]);
+      console.log('🔍 Row después de UPDATE (id, entregable_id):', checkRow);
 
       // Actualizar las fases si existen
       if (fases) {
@@ -284,13 +325,13 @@ class TimeboxController {
         
         // ✅ LÓGICA MEJORADA de avance de fases
         if (fases.planning && fases.planning.completada) {
-          console.log('🔍 Fase planning completada, verificando avance a kickoff');
+          // console.log('🔍 Fase planning completada, verificando avance a kickoff');
           
           // Verificar si ya existe la fase kickoff
           const [existingKickoff] = await executeQuery('SELECT * FROM kickoff_phases WHERE timebox_id = ?', [timeboxIdToUse]);
           
           if (!existingKickoff) {
-            console.log('🔍 Creando fase kickoff automáticamente');
+            // console.log('🔍 Creando fase kickoff automáticamente');
             const kickoffId = uuidv4();
             await executeQuery(`
               INSERT INTO kickoff_phases (id, timebox_id, created_at, updated_at)
@@ -301,7 +342,7 @@ class TimeboxController {
           // ✅ IMPORTANTE: NO cambiar automáticamente a "En Ejecución" si el frontend envía un estado específico
           // Solo cambiar si NO se está enviando un estado desde el frontend
           if (!estado && existingTimebox.estado !== 'En Ejecucion') {
-            console.log('🔍 Cambiando estado a En Ejecucion (desde: ' + existingTimebox.estado + ')');
+            // console.log('🔍 Cambiando estado a En Ejecucion (desde: ' + existingTimebox.estado + ')');
             await executeQuery(`
               UPDATE timeboxes 
               SET estado = 'En Ejecucion', updated_at = CURRENT_TIMESTAMP 
@@ -330,7 +371,7 @@ class TimeboxController {
             fases.close.completada;
           
           if (todasLasFasesCompletadas) {
-            console.log('🔍 Todas las fases completadas → Cambiando estado a Finalizado');
+            // console.log('🔍 Todas las fases completadas → Cambiando estado a Finalizado');
             await executeQuery(`
               UPDATE timeboxes 
               SET estado = 'Finalizado', updated_at = CURRENT_TIMESTAMP 
@@ -495,6 +536,59 @@ class TimeboxController {
     }
   }
 
+  // Actualizar solo el campo "orden" de un timebox
+  async updateTimeboxOrden(req, res) {
+    try {
+      const { id } = req.params;
+      const { orden } = req.body;
+
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          status: false,
+          message: 'Errores de validación',
+          errors: errors.array()
+        });
+      }
+
+      // Verificar que el timebox existe
+      const [existingTimebox] = await executeQuery('SELECT * FROM timeboxes WHERE id = ?', [id]);
+      if (!existingTimebox) {
+        return res.status(404).json({
+          status: false,
+          message: 'Timebox no encontrado'
+        });
+      }
+
+      const sql = 'UPDATE timeboxes SET orden = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+      await executeQuery(sql, [orden, id]);
+
+      // Obtener el timebox actualizado (sin necesidad de cargar fases, igual que updateTimeboxEstado)
+      const [updatedTimebox] = await executeQuery(`
+        SELECT t.*, tt.nombre as tipo_nombre, p.nombre as proyecto_nombre, 
+               per.nombre as business_analyst_nombre
+        FROM timeboxes t
+        LEFT JOIN timebox_types tt ON t.tipo_timebox_id = tt.id
+        LEFT JOIN projects p ON t.project_id = p.id
+        LEFT JOIN personas per ON t.business_analyst_id = per.id
+        WHERE t.id = ?
+      `, [id]);
+
+      res.json({
+        status: true,
+        message: 'Orden del timebox actualizado exitosamente',
+        data: updatedTimebox
+      });
+    } catch (error) {
+      console.error('Error al actualizar orden del timebox:', error);
+      res.status(500).json({
+        status: false,
+        message: 'Error interno del servidor',
+        error: error.message
+      });
+    }
+  }
+
   // Eliminar timebox
   async deleteTimebox(req, res) {
     try {
@@ -539,44 +633,43 @@ class TimeboxController {
       LEFT JOIN timebox_types tt ON t.tipo_timebox_id COLLATE utf8mb4_general_ci = tt.id COLLATE utf8mb4_general_ci
       LEFT JOIN product p ON t.project_id COLLATE utf8mb4_general_ci = p.id COLLATE utf8mb4_general_ci
       LEFT JOIN personas per ON t.business_analyst_id COLLATE utf8mb4_general_ci = per.id COLLATE utf8mb4_general_ci
-      WHERE t.project_id = ?
+      left join entregable ent on ent.id  = t.entregable_id
+      WHERE t.entregable_id  = ?
       ORDER BY t.created_at DESC
     `;
       
       const timeboxes = await executeQuery(sql, [projectId]);
-      console.log('Timeboxes encontrados:', timeboxes.map(t => ({ id: t.id, estado: t.estado })));
-      
       // Cargar las fases y publicación de oferta para cada timebox
       for (let timebox of timeboxes) {
-        console.log('Cargando datos para timebox:', timebox.id);
+        // console.log('Cargando datos para timebox:', timebox.id);
         
         // Cargar fases
         timebox.fases = await this.loadPhasesFromDatabase(timebox.id);
-        console.log('Fases cargadas:', Object.keys(timebox.fases));
+        // console.log('Fases cargadas:', Object.keys(timebox.fases));
         
         // Cargar publicación de oferta
         timebox.publicacionOferta = await this.loadPublicacionOfertaFromDatabase(timebox.id);
-        console.log('Publicación de oferta:', timebox.publicacionOferta);
+        // console.log('Publicación de oferta:', timebox.publicacionOferta);
         
         // Log detallado de la fase planning
-        if (timebox.fases.planning) {
-          console.log('Planning phase details being sent:', {
-            id: timebox.fases.planning.id,
-            teamLeader: timebox.fases.planning.teamLeader,
-            skills: timebox.fases.planning.skills,
-            completada: timebox.fases.planning.completada
-          });
-        }
+        // if (timebox.fases.planning) {
+        //   console.log('Planning phase details being sent:', {
+        //     id: timebox.fases.planning.id,
+        //     teamLeader: timebox.fases.planning.teamLeader,
+        //     skills: timebox.fases.planning.skills,
+        //     completada: timebox.fases.planning.completada
+        //   });
+        // }
       }
       
-      console.log('Final response structure:', timeboxes.map(t => ({
-        id: t.id,
-        estado: t.estado,
-        hasPlanning: !!t.fases.planning,
-        planningTeamLeader: t.fases.planning?.teamLeader,
-        planningSkills: t.fases.planning?.skills,
-        planningCompletada: t.fases.planning?.completada
-      })));
+      // console.log('Final response structure:', timeboxes.map(t => ({
+      //   id: t.id,
+      //   estado: t.estado,
+      //   hasPlanning: !!t.fases.planning,
+      //   planningTeamLeader: t.fases.planning?.teamLeader,
+      //   planningSkills: t.fases.planning?.skills,
+      //   planningCompletada: t.fases.planning?.completada
+      // })));
       
       res.json({
         status: true,
@@ -1065,23 +1158,18 @@ class TimeboxController {
       // Guardar fase de planning
       if (fases.planning) {
         const planning = fases.planning;
-        console.log('🔍 Backend savePhasesToDatabase - planning recibido:', planning);
-        console.log('🔍 Backend savePhasesToDatabase - teamLeader recibido:', planning.teamLeader);
-        console.log('🔍 Backend savePhasesToDatabase - teamLeader.id:', planning.teamLeader?.id);
-        console.log('🔍 Backend savePhasesToDatabase - teamLeader.nombre:', planning.teamLeader?.nombre);
-        
-        console.log('Planning phase data:', {
-          id: planning.id,
-          teamLeader: planning.teamLeader,
-          team_leader_id: planning.team_leader_id,
-          nombre: planning.nombre,
-          codigo: planning.codigo,
-          eje: planning.eje,
-          aplicativo: planning.aplicativo,
-          alcance: planning.alcance,
-          esfuerzo: planning.esfuerzo,
-          fechaInicio: planning.fechaInicio
-        });
+        // console.log('Planning phase data:', {
+        //   id: planning.id,
+        //   teamLeader: planning.teamLeader,
+        //   team_leader_id: planning.team_leader_id,
+        //   nombre: planning.nombre,
+        //   codigo: planning.codigo,
+        //   eje: planning.eje,
+        //   aplicativo: planning.aplicativo,
+        //   alcance: planning.alcance,
+        //   esfuerzo: planning.esfuerzo,
+        //   fechaInicio: planning.fechaInicio
+        // });
         
         const planningId = planning.id || uuidv4();
         
@@ -1095,35 +1183,35 @@ class TimeboxController {
                                  planning.fechaInicio && 
                                  planning.teamLeader?.id;
         
-        console.log('Planning completion check:', {
-          nombre: !!planning.nombre,
-          codigo: !!planning.codigo,
-          eje: !!planning.eje,
-          aplicativo: !!planning.aplicativo,
-          alcance: !!planning.alcance,
-          esfuerzo: !!planning.esfuerzo,
-          fechaInicio: !!planning.fechaInicio,
-          teamLeader: !!planning.teamLeader?.id,
-          isComplete: isPlanningComplete
-        });
+        // console.log('Planning completion check:', {
+        //   nombre: !!planning.nombre,
+        //   codigo: !!planning.codigo,
+        //   eje: !!planning.eje,
+        //   aplicativo: !!planning.aplicativo,
+        //   alcance: !!planning.alcance,
+        //   esfuerzo: !!planning.esfuerzo,
+        //   fechaInicio: !!planning.fechaInicio,
+        //   teamLeader: !!planning.teamLeader?.id,
+        //   isComplete: isPlanningComplete
+        // });
         
         // Verificar si hay campos adicionales como skills
         const hasSkills = planning.skills && Array.isArray(planning.skills);
-        console.log('Skills data:', {
-          hasSkills,
-          skills: planning.skills
-        });
+        // console.log('Skills data:', {
+        //   hasSkills,
+        //   skills: planning.skills
+        // });
         
         // Preparar skills como JSON
         const skillsJson = planning.skills ? JSON.stringify(planning.skills) : null;
-        console.log('Skills JSON to save:', skillsJson);
+        // console.log('Skills JSON to save:', skillsJson);
         // Preparar team leader completo como JSON (para preservar info adicional)
         const teamLeaderJson = planning.teamLeader ? JSON.stringify(planning.teamLeader) : null;
-        console.log('TeamLeader JSON to save (planning):', teamLeaderJson);
+        // console.log('TeamLeader JSON to save (planning):', teamLeaderJson);
         
         // Preparar cumplimiento (checklist) como JSON
         const cumplimientoJson = planning.cumplimiento ? JSON.stringify(planning.cumplimiento) : null;
-        console.log('Cumplimiento JSON to save (planning):', cumplimientoJson);
+        // console.log('Cumplimiento JSON to save (planning):', cumplimientoJson);
         
         await executeQuery(`
           INSERT INTO planning_phases (id, timebox_id, nombre, codigo, descripcion, fecha_fase, eje, aplicativo, alcance, esfuerzo, fecha_inicio, team_leader_id, completada, skills, cumplimiento, team_leader_json)
@@ -1174,8 +1262,8 @@ class TimeboxController {
         const kickoff = fases.kickOff;
         const kickoffId = kickoff.id || uuidv4();
         
-        console.log('🔍 Backend - kickoff recibido:', kickoff);
-        console.log('🔍 Backend - kickoff.financiamiento:', kickoff.financiamiento);
+        // console.log('🔍 Backend - kickoff recibido:', kickoff);
+        // console.log('🔍 Backend - kickoff.financiamiento:', kickoff.financiamiento);
         
         // Preparar compensación económica
         const compensacionEconomica = {
@@ -1212,7 +1300,7 @@ class TimeboxController {
           JSON.stringify(compensacionEconomica)
         ]);
 
-        console.log('🔍 Backend - financiamiento guardado en DB:', kickoff.financiamiento ? JSON.stringify(kickoff.financiamiento) : null);
+        // console.log('🔍 Backend - financiamiento guardado en DB:', kickoff.financiamiento ? JSON.stringify(kickoff.financiamiento) : null);
 
         // Guardar adjuntos de kickoff si existen
         if (kickoff.adjuntos && Array.isArray(kickoff.adjuntos)) {
@@ -1360,8 +1448,6 @@ class TimeboxController {
         ORDER BY pp.updated_at DESC, pp.created_at DESC
       `, [timeboxId]);
       
-      console.log('Planning data from DB:', planning);
-
       if (planning.length > 0) {
         // Tomar el registro más reciente o el que tenga team_leader_id
         let p = planning[0];
@@ -1417,7 +1503,6 @@ class TimeboxController {
             try {
               if (p.skills) {
                 const parsedSkills = typeof p.skills === 'string' ? JSON.parse(p.skills) : p.skills;
-                console.log('Skills loaded from DB:', parsedSkills);
                 return parsedSkills;
               }
               return null;
@@ -1430,7 +1515,6 @@ class TimeboxController {
             try {
               if (p.cumplimiento) {
                 const parsed = typeof p.cumplimiento === 'string' ? JSON.parse(p.cumplimiento) : p.cumplimiento;
-                console.log('Cumplimiento loaded from DB (planning):', parsed);
                 return parsed;
               }
               return [];
@@ -1443,10 +1527,6 @@ class TimeboxController {
           adjuntos: adjuntos
         };
         
-        console.log('Planning phase object being sent to frontend:', planningPhase);
-        console.log('🔍 Backend loadPhasesFromDatabase - teamLeader enviado al frontend:', planningPhase.teamLeader);
-        console.log('🔍 Backend loadPhasesFromDatabase - teamLeader.id enviado:', planningPhase.teamLeader?.id);
-        console.log('🔍 Backend loadPhasesFromDatabase - teamLeader.nombre enviado:', planningPhase.teamLeader?.nombre);
         fases.planning = planningPhase;
       }
 
@@ -1468,7 +1548,6 @@ class TimeboxController {
           teamMovilization: (() => {
             try {
               if (!k.team_movilization) {
-                console.log('No team_movilization found, returning default structure');
                 return {
                   businessAmbassador: null,
                   solutionDeveloper: null,
@@ -1478,14 +1557,13 @@ class TimeboxController {
                 };
               }
               
-              console.log('Parsing team_movilization:', k.team_movilization);
+              // console.log('Parsing team_movilization:', k.team_movilization);
               const parsed = typeof k.team_movilization === 'string' 
                 ? JSON.parse(k.team_movilization)
                 : k.team_movilization;
-              console.log('Parsed team_movilization:', parsed);
               return parsed;
             } catch (error) {
-              console.warn('Error parsing team_movilization:', error);
+              // console.warn('Error parsing team_movilization:', error);
               return {
                 businessAmbassador: null,
                 solutionDeveloper: null,
@@ -1880,11 +1958,11 @@ class TimeboxController {
       const [kickoff] = await executeQuery(`
         SELECT * FROM kickoff_phases WHERE timebox_id = ?
       `, [id]);
-      console.log('Fase kickoff encontrada:', kickoff);
+      // console.log('Fase kickoff encontrada:', kickoff);
 
       // Si no existe la fase kickoff, crearla
       if (!kickoff) {
-        console.log('Creando nueva fase kickoff');
+        // console.log('Creando nueva fase kickoff');
         const kickoffId = uuidv4();
         const teamMovilization = {
           businessAmbassador: null,
@@ -1902,7 +1980,7 @@ class TimeboxController {
           };
         }
         
-        console.log('Nuevo team_movilization:', teamMovilization);
+        // console.log('Nuevo team_movilization:', teamMovilization);
         
         await executeQuery(`
           INSERT INTO kickoff_phases (id, timebox_id, team_movilization, created_at, updated_at)
@@ -1913,7 +1991,7 @@ class TimeboxController {
           JSON.stringify(teamMovilization)
         ]);
         
-        console.log('Fase kickoff creada con ID:', kickoffId);
+        // console.log('Fase kickoff creada con ID:', kickoffId);
       } else {
         console.log('Actualizando fase kickoff existente');
         // Si existe, actualizar el team_movilization
@@ -1932,7 +2010,7 @@ class TimeboxController {
               ? JSON.parse(kickoff.team_movilization)
               : kickoff.team_movilization;
             
-            console.log('team_movilization existente:', existingTeam);
+            // console.log('team_movilization existente:', existingTeam);
             
             // Mantener los otros roles si existen
             if (existingTeam.businessAmbassador) teamMovilization.businessAmbassador = existingTeam.businessAmbassador;
